@@ -1,5 +1,5 @@
 /**
- *    Copyright 2009-2015 the original author or authors.
+ *    Copyright 2009-2016 the original author or authors.
  *
  *    Licensed under the Apache License, Version 2.0 (the "License");
  *    you may not use this file except in compliance with the License.
@@ -53,6 +53,7 @@ import org.apache.ibatis.executor.resultset.DefaultResultSetHandler;
 import org.apache.ibatis.executor.resultset.ResultSetHandler;
 import org.apache.ibatis.executor.statement.RoutingStatementHandler;
 import org.apache.ibatis.executor.statement.StatementHandler;
+import org.apache.ibatis.io.VFS;
 import org.apache.ibatis.logging.Log;
 import org.apache.ibatis.logging.LogFactory;
 import org.apache.ibatis.logging.commons.JakartaCommonsLoggingImpl;
@@ -71,7 +72,9 @@ import org.apache.ibatis.mapping.VendorDatabaseIdProvider;
 import org.apache.ibatis.parsing.XNode;
 import org.apache.ibatis.plugin.Interceptor;
 import org.apache.ibatis.plugin.InterceptorChain;
+import org.apache.ibatis.reflection.DefaultReflectorFactory;
 import org.apache.ibatis.reflection.MetaObject;
+import org.apache.ibatis.reflection.ReflectorFactory;
 import org.apache.ibatis.reflection.factory.DefaultObjectFactory;
 import org.apache.ibatis.reflection.factory.ObjectFactory;
 import org.apache.ibatis.reflection.wrapper.DefaultObjectWrapperFactory;
@@ -103,9 +106,11 @@ public class Configuration {
   protected boolean useColumnLabel = true;
   protected boolean cacheEnabled = true;
   protected boolean callSettersOnNulls = false;
-  
+  protected boolean useActualParamName = true;
+
   protected String logPrefix;
   protected Class <? extends Log> logImpl;
+  protected Class <? extends VFS> vfsImpl;
   protected LocalCacheScope localCacheScope = LocalCacheScope.SESSION;
   protected JdbcType jdbcTypeForNull = JdbcType.OTHER;
   protected Set<String> lazyLoadTriggerMethods = new HashSet<String>(Arrays.asList(new String[] { "equals", "clone", "hashCode", "toString" }));
@@ -113,11 +118,12 @@ public class Configuration {
   protected Integer defaultFetchSize;
   protected ExecutorType defaultExecutorType = ExecutorType.SIMPLE;
   protected AutoMappingBehavior autoMappingBehavior = AutoMappingBehavior.PARTIAL;
+  protected AutoMappingUnknownColumnBehavior autoMappingUnknownColumnBehavior = AutoMappingUnknownColumnBehavior.NONE;
 
   protected Properties variables = new Properties();
+  protected ReflectorFactory reflectorFactory = new DefaultReflectorFactory();
   protected ObjectFactory objectFactory = new DefaultObjectFactory();
   protected ObjectWrapperFactory objectWrapperFactory = new DefaultObjectWrapperFactory();
-  protected MapperRegistry mapperRegistry = new MapperRegistry(this);
 
   protected boolean lazyLoadingEnabled = false;
   protected ProxyFactory proxyFactory = new JavassistProxyFactory(); // #224 Using internal Javassist instead of OGNL
@@ -127,10 +133,11 @@ public class Configuration {
    * Configuration factory class.
    * Used to create Configuration for loading deserialized unread properties.
    *
-   * @see <a href='https://code.google.com/p/mybatis/issues/detail?id=300'>Issue 300</a> (google code)
+   * @see <a href='https://code.google.com/p/mybatis/issues/detail?id=300'>Issue 300 (google code)</a>
    */
   protected Class<?> configurationFactory;
 
+  protected final MapperRegistry mapperRegistry = new MapperRegistry(this);
   protected final InterceptorChain interceptorChain = new InterceptorChain();
   protected final TypeHandlerRegistry typeHandlerRegistry = new TypeHandlerRegistry();
   protected final TypeAliasRegistry typeAliasRegistry = new TypeAliasRegistry();
@@ -208,11 +215,21 @@ public class Configuration {
     return logImpl;
   }
 
-  @SuppressWarnings("unchecked")
-  public void setLogImpl(Class<?> logImpl) {
+  public void setLogImpl(Class<? extends Log> logImpl) {
     if (logImpl != null) {
-      this.logImpl = (Class<? extends Log>) logImpl;
+      this.logImpl = logImpl;
       LogFactory.useCustomLogging(this.logImpl);
+    }
+  }
+
+  public Class<? extends VFS> getVfsImpl() {
+    return this.vfsImpl;
+  }
+
+  public void setVfsImpl(Class<? extends VFS> vfsImpl) {
+    if (vfsImpl != null) {
+      this.vfsImpl = vfsImpl;
+      VFS.addImplClass(this.vfsImpl);
     }
   }
 
@@ -222,6 +239,14 @@ public class Configuration {
 
   public void setCallSettersOnNulls(boolean callSettersOnNulls) {
     this.callSettersOnNulls = callSettersOnNulls;
+  }
+
+  public boolean isUseActualParamName() {
+    return useActualParamName;
+  }
+
+  public void setUseActualParamName(boolean useActualParamName) {
+    this.useActualParamName = useActualParamName;
   }
 
   public String getDatabaseId() {
@@ -286,6 +311,20 @@ public class Configuration {
 
   public void setAutoMappingBehavior(AutoMappingBehavior autoMappingBehavior) {
     this.autoMappingBehavior = autoMappingBehavior;
+  }
+
+  /**
+   * @since 3.4.0
+   */
+  public AutoMappingUnknownColumnBehavior getAutoMappingUnknownColumnBehavior() {
+    return autoMappingUnknownColumnBehavior;
+  }
+
+  /**
+   * @since 3.4.0
+   */
+  public void setAutoMappingUnknownColumnBehavior(AutoMappingUnknownColumnBehavior autoMappingUnknownColumnBehavior) {
+    this.autoMappingUnknownColumnBehavior = autoMappingUnknownColumnBehavior;
   }
 
   public boolean isLazyLoadingEnabled() {
@@ -363,10 +402,16 @@ public class Configuration {
     this.defaultStatementTimeout = defaultStatementTimeout;
   }
 
+  /**
+   * @since 3.3.0
+   */
   public Integer getDefaultFetchSize() {
     return defaultFetchSize;
   }
 
+  /**
+   * @since 3.3.0
+   */
   public void setDefaultFetchSize(Integer defaultFetchSize) {
     this.defaultFetchSize = defaultFetchSize;
   }
@@ -418,6 +463,14 @@ public class Configuration {
     return mapperRegistry;
   }
 
+  public ReflectorFactory getReflectorFactory() {
+	  return reflectorFactory;
+  }
+
+  public void setReflectorFactory(ReflectorFactory reflectorFactory) {
+	  this.reflectorFactory = reflectorFactory;
+  }
+
   public ObjectFactory getObjectFactory() {
     return objectFactory;
   }
@@ -457,7 +510,7 @@ public class Configuration {
   }
 
   public MetaObject newMetaObject(Object object) {
-    return MetaObject.forObject(object, objectFactory, objectWrapperFactory);
+    return MetaObject.forObject(object, objectFactory, objectWrapperFactory, reflectorFactory);
   }
 
   public ParameterHandler newParameterHandler(MappedStatement mappedStatement, Object parameterObject, BoundSql boundSql) {
@@ -682,7 +735,7 @@ public class Configuration {
   public void addCacheRef(String namespace, String referencedNamespace) {
     cacheRefMap.put(namespace, referencedNamespace);
   }
-  
+
   /*
    * Parses all the unprocessed statement nodes in the cache. It is recommended
    * to call this method once all the mappers are added as it provides fail-fast
@@ -763,7 +816,7 @@ public class Configuration {
   protected static class StrictMap<V> extends HashMap<String, V> {
 
     private static final long serialVersionUID = -4950446264854982944L;
-    private String name;
+    private final String name;
 
     public StrictMap(String name, int initialCapacity, float loadFactor) {
       super(initialCapacity, loadFactor);
@@ -814,12 +867,12 @@ public class Configuration {
     }
 
     private String getShortName(String key) {
-      final String[] keyparts = key.split("\\.");
-      return keyparts[keyparts.length - 1];
+      final String[] keyParts = key.split("\\.");
+      return keyParts[keyParts.length - 1];
     }
 
     protected static class Ambiguity {
-      private String subject;
+      final private String subject;
 
       public Ambiguity(String subject) {
         this.subject = subject;
